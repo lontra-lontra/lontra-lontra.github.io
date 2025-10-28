@@ -1,1 +1,252 @@
-test 
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Wave Grid with JSON Rectangles (Original Timing)</title>
+<style>
+  :root {
+    --tile-size: 140px;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #EBE8E2;
+    font-family: system-ui, sans-serif;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(5, var(--tile-size));
+    grid-auto-rows: var(--tile-size);
+    grid-gap: 0;
+    perspective: 1000px;
+    transform-style: preserve-3d;
+  }
+
+  .card {
+    position: relative;
+    transform-style: preserve-3d;
+  }
+
+  .tilt {
+    width: 100%;
+    height: 100%;
+    transform-origin: center center;
+    transform-style: preserve-3d;
+    transition: transform 0.02s linear;
+    will-change: transform;
+    display: flex;
+  }
+
+  .face {
+    width: 100%;
+    height: 100%;
+    background: white;
+    border: 1px solid #ddd;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.06);
+    overflow: hidden;
+    border-radius: 6px;
+    backface-visibility: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .embedded {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    font-size: 0.8rem;
+    padding: 0.5rem;
+  }
+
+  .loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 0.75rem;
+    color: #666;
+  }
+</style>
+</head>
+<body>
+
+<div class="grid" id="grid"></div>
+
+<script>
+/* -------------------------
+   ✅ JSON: multiple rectangular tiles
+------------------------- */
+const config = {
+  tiles: [
+    {
+      url: "https://raw.githubusercontent.com/lontra-lontra/phonetic-transcription-analysis/main/README.html",
+      topLeft: [0, 0],
+      bottomRight: [1, 1]
+    },
+    {
+      url: "https://raw.githubusercontent.com/lontra-lontra/phonetic-transcription-analysis/main/README.html",
+      topLeft: [0, 3],
+      bottomRight: [0, 4]
+    },
+    {
+      url: "https://raw.githubusercontent.com/lontra-lontra/phonetic-transcription-analysis/main/README.html",
+      topLeft: [2, 2],
+      bottomRight: [3, 3]
+    },
+    {
+      url: "https://raw.githubusercontent.com/lontra-lontra/phonetic-transcription-analysis/main/README.html",
+      topLeft: [4, 1],
+      bottomRight: [4, 2]
+    },
+    {
+      url: "https://raw.githubusercontent.com/lontra-lontra/phonetic-transcription-analysis/main/README.html",
+      topLeft: [3, 0],
+      bottomRight: [4, 0]
+    },
+    {
+      url: "https://raw.githubusercontent.com/lontra-lontra/phonetic-transcription-analysis/main/README.html",
+      topLeft: [5, 0],
+      bottomRight: [6, 0]
+    }
+  ]
+};
+
+/* -------------------------
+   PARAMETERS
+------------------------- */
+const N = 5;
+const spacing = 1.0;
+const tilePx = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tile-size'));
+const uiScale = tilePx;
+const DX = 1e-3;
+
+/* -------------------------
+   ✅ Original Surface Function (timing preserved)
+------------------------- */
+function surface(t, x, y) {
+  const periodMs = 1000;   // original wave period
+  const maxCycles = 5;     // stop after 5 full cycles
+  const amplitude = 0.1;
+  const k = 1.0;
+
+  const omega = 2 * Math.PI / periodMs;
+  const cycles = 6;
+  const cyclePhase = 2 * Math.PI;
+  let p_at_x_y = ((omega * t - k * (x + y)) % (cycles * cyclePhase) + (cycles * cyclePhase)) % (cycles * cyclePhase);
+
+  const maxPhase = maxCycles * 2 * Math.PI;
+  if (p_at_x_y < maxPhase) return 0; // same as original: pause before wave start
+  return Math.sin(p_at_x_y) * amplitude;
+}
+
+function partialDx(t, x, y) {
+  return (surface(t, x + DX, y) - surface(t, x - DX, y)) / (2 * DX);
+}
+function partialDy(t, x, y) {
+  return (surface(t, x, y + DX) - surface(t, x, y - DX)) / (2 * DX);
+}
+
+function surfaceNormal(t, x, y) {
+  const sx = partialDx(t, x, y);
+  const sy = partialDy(t, x, y);
+  let nx = -sx, ny = -sy, nz = 1;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  return [nx / len, ny / len, nz / len];
+}
+
+function normalToRotation(nx, ny, nz) {
+  const yaw = Math.atan2(nx, nz);
+  const pitch = Math.asin(-ny);
+  return [pitch, yaw];
+}
+
+/* -------------------------
+   Build Cards from JSON Rectangles
+------------------------- */
+const grid = document.getElementById('grid');
+const cells = [];
+
+for (const { url, topLeft, bottomRight } of config.tiles) {
+  const [r1, c1] = topLeft;
+  const [r2, c2] = bottomRight;
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.gridRow = `${r1 + 1} / ${r2 + 2}`;
+  card.style.gridColumn = `${c1 + 1} / ${c2 + 2}`;
+
+  const tilt = document.createElement('div');
+  tilt.className = 'tilt';
+
+  const face = document.createElement('div');
+  face.className = 'face';
+
+  const embedded = document.createElement('div');
+  embedded.className = 'embedded loading';
+  embedded.textContent = 'Loading...';
+
+  face.appendChild(embedded);
+  tilt.appendChild(face);
+  card.appendChild(tilt);
+  grid.appendChild(card);
+
+  // Compute geometric center for wave motion
+  const centerIndex = (N - 1) / 2;
+  const cx = (c1 + c2) / 2;
+  const cy = (r1 + r2) / 2;
+  const x = (cx - centerIndex) * spacing;
+  const y = (cy - centerIndex) * spacing;
+
+  cells.push({ tilt, embedded, worldX: x, worldY: y, url });
+}
+
+/* -------------------------
+   Load HTML from JSON URLs
+------------------------- */
+async function loadEmbeds() {
+  for (const cell of cells) {
+    try {
+      const res = await fetch(cell.url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const html = await res.text();
+      const div = document.createElement('div');
+      div.className = 'embedded';
+      div.innerHTML = html; // ⚠️ Trusted source only
+      cell.embedded.replaceWith(div);
+      cell.embedded = div;
+    } catch (err) {
+      cell.embedded.textContent = `Error: ${err.message}`;
+    }
+  }
+}
+
+/* -------------------------
+   Animation
+------------------------- */
+function animate(nowMs) {
+  for (const cell of cells) {
+    const { tilt, worldX: x, worldY: y } = cell;
+    const z = surface(nowMs, x, y);
+    const [nx, ny, nz] = surfaceNormal(nowMs, x, y);
+    const [pitch, yaw] = normalToRotation(nx, ny, nz);
+
+    tilt.style.transform = `
+      translate3d(0, 0, ${z * uiScale}px)
+      rotateX(${pitch}rad)
+      rotateY(${yaw}rad)
+    `;
+  }
+  requestAnimationFrame(animate);
+}
+
+loadEmbeds();
+requestAnimationFrame(animate);
+</script>
+
+</body>
+</html>
